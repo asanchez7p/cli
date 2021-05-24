@@ -2,8 +2,8 @@ package commands
 
 import (
 	"context"
+	"fmt"
 	"io/ioutil"
-	"log"
 	"os"
 	"os/exec"
 	"strings"
@@ -13,6 +13,7 @@ import (
 	"libs.altipla.consulting/errors"
 )
 
+var ctx = context.Background()
 var org string
 var pattern string
 
@@ -21,61 +22,68 @@ var cmdClone = &cobra.Command{
 	Short:   "Clona uno o varios proyectos en local",
 	Example: "sites clone",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		var repositoryNames []string
-		var dir []string
-
-		//***LEER PROYECTOS DE LA ORG***
 		client := github.NewClient(nil)
 
 		opt := &github.RepositoryListByOrgOptions{Type: "public"}
-		repos, _, err := client.Repositories.ListByOrg(context.Background(), org, opt)
+		repos, _, err := client.Repositories.ListByOrg(ctx, org, opt)
 		if err != nil {
-			log.Fatal(errors.Stack(err))
-			return err
+			return errors.Trace(err)
 		}
 
+		var repositoryNames []string
 		for _, repo := range repos {
 			repositoryNames = append(repositoryNames, *repo.Name)
 		}
 
-		//***LEER EL DIRECTORIO*** (y guardamos los nombres en dir)
 		path, err := os.Getwd()
 		if err != nil {
-			log.Fatal(errors.Stack(err))
-			return err
+			return errors.Trace(err)
 		}
 
-		files, err := ioutil.ReadDir(path)
+		files, err := ioutil.ReadDir(path + "/" + org)
 		if err != nil {
-			log.Fatal(errors.Stack(err))
-			return err
+			err = os.MkdirAll(path+"/"+org, 0755)
+			if err != nil {
+				return errors.Trace(err)
+			}
 		}
 
+		var dir []string
 		for _, f := range files {
 			dir = append(dir, f.Name())
 		}
 
-		//***COMPARAMOS DIRECTORIO Y REPOSITORIO***
+		var existe bool
 		for _, x := range repositoryNames {
+			existe = false
 			if strings.HasPrefix(x, pattern) {
 				for _, y := range dir {
 					if x == y {
-						//si el proyecto se encuentra no hacemos nada
-						goto jump
+						existe = true
+						fmt.Println("[" + x + "] OMITIENDO...")
+						break
 					}
 				}
 			}
 
-			//clonamos si no se encuentra en el directorio
-			if strings.HasPrefix(x, pattern) {
+			if !existe && strings.HasPrefix(x, pattern) {
+				fmt.Println("[" + x + "] CLONANDO...")
 				var path2 string = path + "/" + org + "/" + x
 				x = "https://github.com/" + org + "/" + x
 				com := exec.Command("git", "clone", x, path2)
-				com.Run()
+				if err := com.Run(); err != nil {
+					return errors.Trace(err)
+				}
 			}
-		jump:
 		}
 
 		return nil
 	},
+}
+
+func init() {
+	cmdClone.Flags().StringVarP(&org, "org", "o", "", "Organizacion de Github (requerido)")
+	cmdClone.MarkFlagRequired("org")
+	cmdClone.Flags().StringVarP(&pattern, "pattern", "p", "", "Prefijo de los proyectos a clonar (requerido)")
+	cmdClone.MarkFlagRequired("pattern")
 }
